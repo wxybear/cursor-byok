@@ -9,5 +9,7 @@ mod model;
 mod run;
 
 pub use action::*;
-pub(crate) use break_messages::{compile_injection, compile_user_message_action, RuntimeAction};
+pub(crate) use break_messages::{
+    compile_injection, compile_user_message_action, effective_message_id, RuntimeAction,
+};
 pub use run::*;

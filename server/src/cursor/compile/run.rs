@@ -133,7 +133,7 @@ pub(crate) async fn prepare(
         starts_turn,
         compacting,
         background_completion,
-    } = action(request)?;
+    } = action(request, request_id)?;
     let checkpoint_mode = if request.subagent_type_name.is_some() {
         Mode::Subagent
     } else {
@@ -399,7 +399,7 @@ fn execution_run_id(request_id: &str) -> RunId {
     RunId::new(format!("{request_id}:{}", &execution_id[..8]))
 }
 
-fn action(request: &pb::AgentRunRequest) -> Result<ActionProjection> {
+fn action(request: &pb::AgentRunRequest, request_id: &str) -> Result<ActionProjection> {
     let conversation_mode = request
         .conversation_state
         .as_ref()
@@ -431,11 +431,6 @@ fn action(request: &pb::AgentRunRequest) -> Result<ActionProjection> {
             } else {
                 user.mode
             };
-            if user.message_id.is_empty() {
-                return Err(Error::Protocol(
-                    "Cursor user message action has no message_id".into(),
-                ));
-            }
             if user.text.trim() == "/summarize" {
                 return Ok(ActionProjection {
                     mode,
@@ -461,7 +456,8 @@ fn action(request: &pb::AgentRunRequest) -> Result<ActionProjection> {
                     .filter(|text| !text.is_empty())
                     .cloned(),
             );
-            let input_id = format!("cursor:user:{}", user.message_id);
+            let message_id = break_messages::effective_message_id(request_id, user);
+            let input_id = format!("cursor:user:{message_id}");
             Ok(ActionProjection {
                 mode,
                 turn_user: Some(user.clone()),

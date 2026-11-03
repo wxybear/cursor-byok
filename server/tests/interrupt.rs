@@ -502,6 +502,71 @@ async fn queued_user_message_after_turn_ended_starts_the_next_turn() {
 }
 
 #[tokio::test]
+async fn run_without_user_message_id_still_starts_the_turn() {
+    // Cursor 的 subagent 子 run 不下发 UserMessage.message_id；这类 run 必须照常启动，
+    // 而不是在 prepare 阶段被拒绝、让子 agent 直接 stopped by error。
+    let (_directory, store) = fixtures::temp_store().await;
+    let provider = fake_provider::FakeProvider::default();
+    provider.push(text_response("subagent reply"));
+    let assets = PromptAssets::load(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("prompt/cursor")
+            .as_path(),
+    )
+    .unwrap();
+    let registry = TransportRegistry::new(
+        store,
+        Arc::new(provider.clone()),
+        PromptCompiler::new(assets),
+    );
+    let handle = registry.get_or_create("subagent-request").await.unwrap();
+    let mut output = handle.subscribe();
+
+    let mut message = client_run_for("subagent-request", "subagent-conversation");
+    let Some(pb::agent_client_message::Message::RunRequest(request)) = message.message.as_mut()
+    else {
+        panic!("expected run request");
+    };
+    let Some(pb::conversation_action::Action::UserMessageAction(action)) =
+        request.action.as_mut().and_then(|action| action.action.as_mut())
+    else {
+        panic!("expected user message action");
+    };
+    action.user_message.as_mut().unwrap().message_id.clear();
+
+    handle
+        .command(TransportCommand::Append {
+            seqno: 0,
+            message: Box::new(message),
+        })
+        .await
+        .unwrap();
+
+    let mut append_seqno = 1;
+    let mut text = String::new();
+    loop {
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), output.recv())
+            .await
+            .unwrap()
+            .expect("run closed without EndStream");
+        let (flags, payload) = connect::decode_frames(&frame).unwrap().pop().unwrap();
+        if flags & connect::END_STREAM_FLAG != 0 {
+            break;
+        }
+        let server = pb::AgentServerMessage::decode(payload).unwrap();
+        if let Some(pb::agent_server_message::Message::InteractionUpdate(update)) = server.message {
+            if let Some(pb::interaction_update::Message::TextDelta(delta)) = update.message {
+                text.push_str(&delta.text);
+            }
+        }
+        acknowledge_kv(&handle, &mut append_seqno, &frame).await;
+    }
+
+    assert!(text.contains("subagent reply"));
+    assert_eq!(provider.requests().len(), 1);
+}
+
+#[tokio::test]
 async fn runtime_user_message_action_interrupts_and_continues_with_new_message() {
     let (_directory, store) = fixtures::temp_store().await;
     let provider = fake_provider::FakeProvider::default();

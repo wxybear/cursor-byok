@@ -22,9 +22,20 @@ pub(crate) enum RuntimeAction {
     UserMessage(pb::UserMessageAction),
 }
 
+/// Cursor 的 subagent 子 run 不下发 `UserMessage.message_id`。用 run 的 request_id
+/// 加正文摘要合成稳定 id，避免整个 run 因为缺少客户端 id 被拒绝。
+pub(crate) fn effective_message_id(request_id: &str, user: &pb::UserMessage) -> String {
+    if !user.message_id.is_empty() {
+        return user.message_id.clone();
+    }
+    let digest = BlobId::digest(user.text.as_bytes()).to_base64();
+    format!("byok:user:{request_id}:{digest}")
+}
+
 pub(crate) async fn compile_user_message_action(
     action: &pb::UserMessageAction,
     current_mode: i32,
+    request_id: &str,
     compiler: &PromptCompiler,
     blobs: &BlobSynchronizer,
 ) -> Result<CanonicalMessage> {
@@ -32,11 +43,7 @@ pub(crate) async fn compile_user_message_action(
         .user_message
         .as_ref()
         .ok_or_else(|| Error::Protocol("Cursor user message action has no UserMessage".into()))?;
-    if user.message_id.is_empty() {
-        return Err(Error::Protocol(
-            "Cursor user message action has no message_id".into(),
-        ));
-    }
+    let message_id = effective_message_id(request_id, user);
     let mode = if user.mode == pb::AgentMode::Unspecified as i32 {
         current_mode
     } else {
@@ -57,7 +64,7 @@ pub(crate) async fn compile_user_message_action(
     );
     let empty_context = pb::RequestContext::default();
     compile(
-        format!("user-message:{}", user.message_id),
+        format!("user-message:{message_id}"),
         super::run::mode_from_proto(mode)?,
         user,
         action.request_context.as_ref().unwrap_or(&empty_context),

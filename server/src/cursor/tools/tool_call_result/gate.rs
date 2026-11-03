@@ -347,12 +347,11 @@ fn gate_edit(tool_name: &str, tool: &mut pb::EditToolCall) {
         "PatchEdit" | "PatchEditLines" | "PatchEditSpan" | "StrReplace" => PATCH_EDIT_RESULT_LIMIT,
         _ => EDIT_RESULT_LIMIT,
     };
+    // diff_string 截断下发; before/after 全量文件内容原样下发, Cursor 客户端据此生成
+    // 编辑气泡的 before/after 内容与 Last Agent Turn 的 diff 数据。
     if let Some(diff) = success.diff_string.as_mut() {
         *diff = truncate_text(tool_name, diff, limit);
-        success.before_full_file_content = None;
-        success.after_full_file_content.clear();
     } else {
-        success.before_full_file_content = None;
         success.after_full_file_content =
             truncate_text(tool_name, &success.after_full_file_content, limit);
     }
